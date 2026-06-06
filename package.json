@@ -1,0 +1,41 @@
+{
+  "name": "three-ocean",
+  "version": "0.1.0",
+  "description": "Open-source FFT ocean rendering for Three.js with WebGPU and WebGL2 support",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/three-ocean.cjs.js",
+  "module": "dist/three-ocean.es.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/three-ocean.es.js",
+      "require": "./dist/three-ocean.cjs.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "dev": "vite --config vite.demo.config.ts",
+    "build": "vite build",
+    "build:demo": "vite build --config vite.demo.config.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "test": "vitest"
+  },
+  "peerDependencies": {
+    "three": ">=0.181.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.174.0",
+    "three": "^0.174.0",
+    "typescript": "^5.7.0",
+    "vite": "^6.2.0",
+    "vite-plugin-dts": "^4.5.0",
+    "lil-gui": "^0.20.0"
+  }
+}

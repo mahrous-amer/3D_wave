@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "declarationDir": "dist",
+    "outDir": "dist",
+    "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "three-ocean": ["./src/index.ts"],
+      "three-ocean/*": ["./src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "demo/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}

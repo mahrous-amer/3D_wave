@@ -17,6 +17,7 @@ import {
   sin,
   cos,
   sqrt,
+  clamp,
 } from 'three/tsl';
 import type { WebGPURenderer } from 'three/webgpu';
 import { GRAVITY, TWO_PI } from '../../core/constants';
@@ -123,23 +124,21 @@ export class FFTCompute {
   async compute(time: number): Promise<void> {
     this.timeUniform.value = time;
 
-    // 1. Time evolution -> writes h(k,t) into bufA[0], bufA[1], bufA[2]
-    await this.renderer.computeAsync(this.timeEvolutionNode);
+    // Collect all passes into one array for a single GPU submission
+    const nodes: any[] = [this.timeEvolutionNode];
 
-    // 2. IFFT for each component
     for (let comp = 0; comp < 3; comp++) {
-      // Horizontal passes
       for (let stage = 0; stage < this.logN; stage++) {
-        await this.renderer.computeAsync(this.hPassNodes[comp][stage]);
+        nodes.push(this.hPassNodes[comp][stage]);
       }
-      // Vertical passes
       for (let stage = 0; stage < this.logN; stage++) {
-        await this.renderer.computeAsync(this.vPassNodes[comp][stage]);
+        nodes.push(this.vPassNodes[comp][stage]);
       }
     }
 
-    // 3. Assemble displacement + normals
-    await this.renderer.computeAsync(this.assembleNode);
+    nodes.push(this.assembleNode);
+
+    await this.renderer.computeAsync(nodes);
   }
 
   private buildAllNodes(): void {
@@ -302,8 +301,6 @@ export class FFTCompute {
     const normTex = this.normalTexture;
     const chop = this.choppinessUniform;
 
-    // After 2*logN total ping-pong passes (logN horizontal + logN vertical),
-    // the result always lands back in bufA regardless of logN parity.
     const dyFinal = this.bufA[0];
     const dxFinal = this.bufA[1];
     const dzFinal = this.bufA[2];
@@ -325,15 +322,47 @@ export class FFTCompute {
       const parity = float(x.add(y).modInt(2));
       const sign = float(1).sub(parity.mul(2));
 
-      const dy = dyRaw.mul(sign).div(N * N); // IFFT normalization
+      const dy = dyRaw.mul(sign).div(N * N);
       const dx = dxRaw.mul(sign).mul(chop).div(N * N);
       const dz = dzRaw.mul(sign).mul(chop).div(N * N);
 
-      textureStore(dispTex, coord, vec4(dx, dy, dz, 0)).toWriteOnly();
-
-      // Normal from finite differences, scaled by grid spacing (N/L)
+      // Jacobian of horizontal displacement field for foam detection.
+      // J = (1 + dDx/dx)(1 + dDz/dz) - dDx/dz * dDz/dx
+      // Foam appears where J < threshold (wave crest folding).
       const xp1 = x.add(1).modInt(N);
       const yp1 = y.add(1).modInt(N);
+      const xm1 = x.add(N - 1).modInt(N);
+      const ym1 = y.add(N - 1).modInt(N);
+
+      const parityXp = float(xp1.add(y).modInt(2));
+      const parityXm = float(xm1.add(y).modInt(2));
+      const parityYp = float(x.add(yp1).modInt(2));
+      const parityYm = float(x.add(ym1).modInt(2));
+
+      const dxXp = textureLoad(dxFinal, uvec2(uint(xp1), uint(y)), int(0)).x.mul(float(1).sub(parityXp.mul(2))).mul(chop).div(N * N);
+      const dxXm = textureLoad(dxFinal, uvec2(uint(xm1), uint(y)), int(0)).x.mul(float(1).sub(parityXm.mul(2))).mul(chop).div(N * N);
+      const dzYp = textureLoad(dzFinal, uvec2(uint(x), uint(yp1)), int(0)).x.mul(float(1).sub(parityYp.mul(2))).mul(chop).div(N * N);
+      const dzYm = textureLoad(dzFinal, uvec2(uint(x), uint(ym1)), int(0)).x.mul(float(1).sub(parityYm.mul(2))).mul(chop).div(N * N);
+      const dxYp = textureLoad(dxFinal, uvec2(uint(x), uint(yp1)), int(0)).x.mul(float(1).sub(parityYp.mul(2))).mul(chop).div(N * N);
+      const dxYm = textureLoad(dxFinal, uvec2(uint(x), uint(ym1)), int(0)).x.mul(float(1).sub(parityYm.mul(2))).mul(chop).div(N * N);
+      const dzXp = textureLoad(dzFinal, uvec2(uint(xp1), uint(y)), int(0)).x.mul(float(1).sub(parityXp.mul(2))).mul(chop).div(N * N);
+      const dzXm = textureLoad(dzFinal, uvec2(uint(xm1), uint(y)), int(0)).x.mul(float(1).sub(parityXm.mul(2))).mul(chop).div(N * N);
+
+      const dDxdx = dxXp.sub(dxXm).mul(texelScale * 0.5);
+      const dDzdz = dzYp.sub(dzYm).mul(texelScale * 0.5);
+      const dDxdz = dxYp.sub(dxYm).mul(texelScale * 0.5);
+      const dDzdx = dzXp.sub(dzXm).mul(texelScale * 0.5);
+
+      const Jxx = float(1).add(dDxdx);
+      const Jzz = float(1).add(dDzdz);
+      const J = Jxx.mul(Jzz).sub(dDxdz.mul(dDzdx));
+
+      // Store foam factor in w channel: saturate(1 - J) clamped to [0,1]
+      const foam = clamp(float(1).sub(J), float(0), float(1));
+
+      textureStore(dispTex, coord, vec4(dx, dy, dz, foam)).toWriteOnly();
+
+      // Normals from finite differences
       const rCoord = uvec2(uint(xp1), uint(y));
       const uCoord = uvec2(uint(x), uint(yp1));
 

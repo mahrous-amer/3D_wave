@@ -75,6 +75,7 @@ export class WaveEngine {
    * bind to the FFT output textures.
    */
   initFFT(renderer: WebGPURenderer, fftSize: number): void {
+    this.fftCompute?.dispose();
     this.fftCompute = new FFTCompute(
       renderer,
       fftSize,

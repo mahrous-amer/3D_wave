@@ -41,6 +41,8 @@ export class WaterMaterial {
   private readonly sssIntensityUniform: ReturnType<typeof uniform>;
   private readonly fresnelPowerUniform: ReturnType<typeof uniform>;
   private readonly opacityUniform: ReturnType<typeof uniform>;
+  private readonly foamColorUniform: ReturnType<typeof uniform>;
+  private readonly foamIntensityUniform: ReturnType<typeof uniform>;
 
   constructor(waves: WaveEngine, config?: Partial<WaterMaterialConfig>) {
     const cfg = { ...DEFAULT_MATERIAL_CONFIG, ...config };
@@ -52,6 +54,8 @@ export class WaterMaterial {
     this.sssIntensityUniform = uniform(cfg.sssIntensity);
     this.fresnelPowerUniform = uniform(cfg.fresnelPower);
     this.opacityUniform = uniform(cfg.opacity);
+    this.foamColorUniform = uniform(new Color(cfg.foamColor));
+    this.foamIntensityUniform = uniform(cfg.foamIntensity);
 
     // Create material
     this.material = new MeshPhysicalNodeMaterial();
@@ -73,7 +77,6 @@ export class WaterMaterial {
     if (waves.hasFFT && waves.fftNormalTexture) {
       const fftNorm = texture(waves.fftNormalTexture, uv()).xyz;
       const gerstnerNorm = waves.normalNode();
-      // Combine normals: add tangential perturbations from both sources
       this.material.normalNode = normalize(
         fftNorm.add(gerstnerNorm).sub(vec3(0, 1, 0)),
       );
@@ -81,8 +84,10 @@ export class WaterMaterial {
       this.material.normalNode = waves.normalNode();
     }
 
-    // Color: Fresnel-blended shallow/deep + environment
-    this.material.colorNode = this.buildColorNode();
+    // Color: Fresnel-blended shallow/deep + SSS + foam
+    this.material.colorNode = this.buildColorNode(
+      waves.hasFFT && waves.fftDisplacementTexture ? waves.fftDisplacementTexture : null,
+    );
 
     // PBR properties for realistic water
     this.material.metalness = 0;
@@ -92,15 +97,17 @@ export class WaterMaterial {
     // We handle refraction/transparency through our own colorNode instead.
   }
 
-  private buildColorNode() {
+  private buildColorNode(fftDisplacementTexture: import('three/webgpu').StorageTexture | null = null) {
     const fresnelPower = this.fresnelPowerUniform;
     const shallowColor = this.shallowColorUniform;
     const deepColor = this.deepColorUniform;
     const sssColor = this.sssColorUniform;
     const sssIntensity = this.sssIntensityUniform;
     const opacity = this.opacityUniform;
+    const foamColor = this.foamColorUniform;
+    const foamIntensity = this.foamIntensityUniform;
 
-    // Fresnel factor: view-dependent blend between reflection and refraction
+    // Fresnel factor
     const viewDir = normalize(cameraPosition.sub(positionWorld));
     const normal = normalView;
     const cosTheta = max(dot(normal, positionViewDirection.negate()), 0.0);
@@ -111,9 +118,15 @@ export class WaterMaterial {
     // Depth-based color
     const waterColor = mix(shallowColor, deepColor, fresnel);
 
-    // Simple SSS approximation: add a tint based on view angle
+    // SSS
     const sssFactor = pow(max(cosTheta, 0.0), 2.0).mul(sssIntensity);
-    const finalColor = mix(waterColor, sssColor, sssFactor);
+    let finalColor = mix(waterColor, sssColor, sssFactor);
+
+    // Foam: read from displacement texture w channel (Jacobian-based mask)
+    if (fftDisplacementTexture) {
+      const foamMask = texture(fftDisplacementTexture, uv()).w.mul(foamIntensity);
+      finalColor = mix(finalColor, foamColor, foamMask) as typeof finalColor;
+    }
 
     return vec4(finalColor, opacity);
   }
@@ -136,6 +149,12 @@ export class WaterMaterial {
     }
     if (config.opacity !== undefined) {
       this.opacityUniform.value = config.opacity;
+    }
+    if (config.foamColor !== undefined) {
+      (this.foamColorUniform.value as Color).set(config.foamColor);
+    }
+    if (config.foamIntensity !== undefined) {
+      this.foamIntensityUniform.value = config.foamIntensity;
     }
   }
 

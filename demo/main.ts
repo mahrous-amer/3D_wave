@@ -120,6 +120,12 @@ async function main() {
   materialFolder.add(matParams, 'opacity', 0, 1, 0.01).onChange((v: number) => {
     ocean.setMaterialConfig({ opacity: v });
   });
+  materialFolder.addColor(matParams, 'foamColor').onChange((v: string) => {
+    ocean.setMaterialConfig({ foamColor: v });
+  });
+  materialFolder.add(matParams, 'foamIntensity', 0, 1, 0.01).name('Foam Intensity').onChange((v: number) => {
+    ocean.setMaterialConfig({ foamIntensity: v });
+  });
   materialFolder.close();
 
   // Resize handler

@@ -93,7 +93,22 @@ export class OceanSystem {
   }
 
   setQuality(preset: QualityPreset): void {
+    if (this.config.quality === preset) return;
     this.config.quality = preset;
+
+    const quality = getQualitySettings(preset);
+    const segments = this.config.meshSegments ?? quality.meshSegments;
+
+    // Rebuild FFT pipeline at new resolution
+    this.waves.initFFT(this.renderer, quality.fftSize);
+
+    // Rebuild mesh at new tessellation
+    this.scene.remove(this.mesh.getObject());
+    this.mesh.dispose();
+    const newMesh = new WaterMesh(this.config.size, segments, this.material);
+    // @ts-ignore — reassign readonly for rebuild
+    (this as any).mesh = newMesh;
+    this.scene.add(newMesh.getObject());
   }
 
   setWaveConfig(config: Partial<WaveConfig>): void {
